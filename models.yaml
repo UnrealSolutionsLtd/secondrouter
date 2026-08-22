@@ -1,0 +1,67 @@
+# OpenRouter model slug  ->  BytePlus ModelArk model id.
+#
+# LEFT  = the slug your customers send us. These follow OpenRouter's
+#         `vendor/model` convention; change them to match the exact strings your
+#         customer list actually uses.
+# RIGHT = the BytePlus model id, taken verbatim from the ModelArk model list.
+#         These are the dated (pinned) ids the docs publish — undated aliases are
+#         not guaranteed to resolve.
+#
+# A request naming a slug that isn't listed here returns 404 (like OpenRouter's
+# "no endpoints found"), so this file also acts as the allowlist.
+#
+# Region: every model below is available in ap-southeast-1
+# (https://ark.ap-southeast.bytepluses.com/api/v3). Only seed-2-0-* and
+# seedream-5-0-lite are also served from eu-west-1.
+
+# ---------------------------------------------------------------------------
+# Video generation  ->  POST /api/v1/videos
+# API: ModelArk "Video generation API" (docs 1520757)
+# Loaded by app.py into MODEL_MAP. This list is the video allowlist.
+# ---------------------------------------------------------------------------
+models:
+  # Dreamina Seedance 2.5 — mainline. 4–30s, 480p/720p/1080p, .mp4/.mov.
+  # Default model in README.md and smoke_test.sh.
+  # t2v, i2v (first / first+last frame), multimodal reference-to-video,
+  # video editing, video extension.
+  - openrouter: bytedance/seedance-2.5
+    byteplus: dreamina-seedance-2-5-260628
+
+  # Dreamina Seedance 2.0 — same capability set, 4–15s, adds 4K (heavily
+  # rate-limited upstream: 15 RPM / concurrency 1).
+  - openrouter: bytedance/seedance-2.0
+    byteplus: dreamina-seedance-2-0-260128
+
+  # Seedance 2.0 fast — 4–15s, 480p/720p only.
+  - openrouter: bytedance/seedance-2.0-fast
+    byteplus: dreamina-seedance-2-0-fast-260128
+
+  # Seedance 2.0 mini — 4–15s, 480p/720p only.
+  - openrouter: bytedance/seedance-2.0-mini
+    byteplus: dreamina-seedance-2-0-mini-260615
+
+  # Seedance 1.5 pro — 4–12s, 480p/720p/1080p. t2v + i2v (first / first+last).
+  - openrouter: bytedance/seedance-1.5-pro
+    byteplus: seedance-1-5-pro-251215
+
+# ---------------------------------------------------------------------------
+# Image generation  ->  POST /api/v1/images  (NOT WIRED UP YET — NEXT step 4)
+# API: ModelArk "Image generation API" (docs 1541523) — a DIFFERENT endpoint
+# from the video create/retrieve task pair, and synchronous rather than polled.
+#
+# Deliberately kept out of `models:` above: app.py loads only that key, and
+# anything in it is advertised by GET /api/v1/videos/models and accepted by
+# POST /api/v1/videos. Move nothing here until the image endpoint exists.
+# ---------------------------------------------------------------------------
+image_models:
+  # Dola Seedream 5.0 pro — adds layer decomposition. Single image only.
+  - openrouter: bytedance/seedream-5.0-pro
+    byteplus: dola-seedream-5-0-pro-260628
+
+  # Seedream 5.0 — t2i, i2i, multi-reference i2i, plus batch generation.
+  - openrouter: bytedance/seedream-5.0
+    byteplus: seedream-5-0-260128
+
+  # Seedream 5.0 lite — the one image model also served from eu-west-1.
+  - openrouter: bytedance/seedream-5.0-lite
+    byteplus: seedream-5-0-lite-260128
