@@ -1,0 +1,39 @@
+# --- secrets ---
+# .env holds ARK_API_KEY and ROUTER_KEYS. Never commit it.
+# .env.example is the tracked template (negated below).
+.env
+.env.*
+!.env.example
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- local scratch ---
+*.log
+*.mp4
