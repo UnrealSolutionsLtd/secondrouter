@@ -9,10 +9,6 @@
 #
 # A request naming a slug that isn't listed here returns 404 (like OpenRouter's
 # "no endpoints found"), so this file also acts as the allowlist.
-#
-# Region: every model below is available in ap-southeast-1
-# (https://ark.ap-southeast.bytepluses.com/api/v3). Only seed-2-0-* and
-# seedream-5-0-lite are also served from eu-west-1.
 
 # ---------------------------------------------------------------------------
 # Video generation  ->  POST /api/v1/videos
