@@ -8,13 +8,13 @@ BytePlus create/retrieve task and returns results in OpenRouter's shape.
 
 ## Endpoints
 
-| Method | Path                                   | Purpose                          |
-|--------|----------------------------------------|----------------------------------|
-| POST   | `/api/v1/videos`                       | Submit a job → `{id, polling_url, status}` |
-| GET    | `/api/v1/videos/{id}`                  | Poll status → result URLs when done |
-| GET    | `/api/v1/videos/{id}/content?index=0`  | Stream the MP4                   |
-| GET    | `/api/v1/videos/models`                | List mapped models (stub)        |
-| GET    | `/healthz`                             | Liveness                         |
+| Method | Path                                  | Purpose                                    |
+|--------|---------------------------------------|--------------------------------------------|
+| POST   | `/api/v1/videos`                      | Submit a job → `{id, polling_url, status}` |
+| GET    | `/api/v1/videos/{id}`                 | Poll status → result URLs when done        |
+| GET    | `/api/v1/videos/{id}/content?index=0` | Stream the MP4                             |
+| GET    | `/api/v1/videos/models`               | List mapped models                         |
+| GET    | `/healthz`                            | Liveness                                   |
 
 Auth: every call needs `Authorization: Bearer <one of ROUTER_KEYS>`. The BytePlus
 key is injected server-side and never exposed.
@@ -79,8 +79,8 @@ error verbatim, so an unsupported knob gives you a precise 400.
 | `generate_audio` | Default `true` — the video comes back with sound. |
 | `watermark`, `seed`, `camera_fixed`, `frames`, `output_format`, `draft` | Passed straight through. |
 | `return_last_frame` | Adds `last_frame_url` to the completed response. |
-| `frame_images[]` | `{url, frame_type: first_frame|last_frame}` — image-to-video. |
-| `input_references[]` | `{url, type: image|video|audio}` — omni reference-to-video (Seedance 2.x). |
+| `frame_images[]` | `{url, frame_type: first_frame \| last_frame}` — image-to-video. |
+| `input_references[]` | `{url, type: image \| video \| audio}` — omni reference-to-video (Seedance 2.x). |
 | `provider.byteplus_extra` | Escape hatch: merged into the upstream body untouched. |
 
 `frame_images` and `input_references` are mutually exclusive task types and
