@@ -12,7 +12,7 @@ BytePlus create/retrieve task and returns results in OpenRouter's shape.
 |--------|---------------------------------------|--------------------------------------------|
 | POST   | `/api/v1/videos`                      | Submit a job → `{id, polling_url, status}` |
 | GET    | `/api/v1/videos/{id}`                 | Poll status → result URLs when done        |
-| GET    | `/api/v1/videos/{id}/content?index=0` | Stream the MP4                             |
+| GET    | `/api/v1/videos/{id}/content?index=0` | `302` to the presigned video URL           |
 | GET    | `/api/v1/videos/models`               | List mapped models                         |
 | GET    | `/healthz`                            | Liveness                                   |
 
@@ -77,7 +77,7 @@ The video lands in `./smoke-output/<timestamp>.mp4`.
 The image is a stateless HTTP server on `$PORT` with no volumes or database, so
 it runs unchanged on Cloud Run, Render, Railway, Fly, ECS, or a plain VM.
 
-1. Build & push: `docker build -t <registry>/video-router . && docker push <registry>/video-router`
+1. Build & push: `docker build -t <registry>/second-router . && docker push <registry>/second-router`
 2. Run with env vars: `ARK_API_KEY`, `ROUTER_KEYS`, `ARK_BASE_URL`, and
    **`PUBLIC_BASE_URL`** set to the service's public https URL (so `polling_url`
    is correct behind a load balancer).
@@ -104,5 +104,23 @@ error verbatim, so an unsupported knob gives you a precise 400.
 `frame_images` and `input_references` are mutually exclusive task types and
 cannot be combined. `callback_url` is accepted and ignored — polling only.
 
-Result URLs are presigned and **expire after 24 hours**. Fetch through
-`/content`, or store the bytes yourself.
+Result URLs are presigned and **expire after 24 hours**. Store the bytes yourself
+if you need them longer.
+
+## Downloading the result
+
+`GET /api/v1/videos/{id}/content` returns a **302** to the presigned asset URL.
+The client fetches the bytes straight from storage, so the router never carries
+them — a 25s/720p clip is ~41 MB, and proxying that per request is the first
+thing to fall over under load. Storage serves range requests, so seeking works.
+
+This discloses nothing extra: the same URL is already in `unsigned_urls` on the
+poll response. No auth header of ours travels to the CDN, and well-behaved
+clients (curl, browsers) drop `Authorization` on a cross-host redirect.
+
+**Your clients must be able to reach the asset host directly.** Follow redirects
+(`curl -L`), or just use the `unsigned_urls` from the poll response.
+
+```bash
+curl -L -o out.mp4 "localhost:8080/api/v1/videos/<id>/content" -H "Authorization: Bearer test-key-123"
+```

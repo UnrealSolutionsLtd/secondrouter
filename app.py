@@ -1,5 +1,5 @@
 """
-video-router — OpenRouter-compatible video generation API, BytePlus backend.
+Second Router — OpenRouter-compatible video generation API, BytePlus backend.
 
 Client-facing surface mirrors OpenRouter's video contract:
     POST   /api/v1/videos               -> submit a generation job
@@ -33,8 +33,7 @@ import base64
 import httpx
 import yaml
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.background import BackgroundTask
+from fastapi.responses import JSONResponse, RedirectResponse
 
 try:
     from dotenv import load_dotenv
@@ -310,7 +309,7 @@ def extract_last_frame_url(bp: dict):
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="video-router (OpenRouter-compatible, BytePlus backend)")
+app = FastAPI(title="Second Router (OpenRouter-compatible, BytePlus backend)")
 client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
 
 
@@ -405,13 +404,9 @@ async def get_content(job_id: str, request: Request, index: int = 0):
     if index >= len(urls):
         raise HTTPException(status_code=404, detail="no content at that index")
 
-    # Stream the bytes through. No auth header is sent to the asset URL (it's a
-    # presigned TOS URL, valid 24h) so the upstream key is never leaked to a CDN.
-    upstream = await client.send(client.build_request("GET", urls[index]), stream=True)
-    headers = {"Content-Type": upstream.headers.get("content-type", "video/mp4")}
-    return StreamingResponse(
-        upstream.aiter_raw(),
-        status_code=upstream.status_code,
-        headers=headers,
-        background=BackgroundTask(upstream.aclose),
-    )
+    # Hand the client the presigned TOS URL and stay out of the data path. TOS
+    # serves range requests natively, so seeking works, and neither our bandwidth
+    # nor a pooled connection is spent on the transfer. This discloses nothing
+    # new — the same URL is already in `unsigned_urls` on the poll response — and
+    # no auth header of ours travels to the CDN.
+    return RedirectResponse(urls[index], status_code=302)

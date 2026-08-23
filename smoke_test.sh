@@ -77,9 +77,13 @@ while true; do
   esac
 done
 
-echo "5) download through the router (no upstream key reaches the CDN)"
+echo "5) download — default path is a 302 to the presigned TOS URL"
+# -L follows it. curl drops the Authorization header on a cross-host redirect,
+# so our router key never reaches the CDN.
 mkdir -p "$OUT_DIR"
 FILE="${OUT_DIR}/$(date +%Y%m%d-%H%M%S).mp4"
-curl -sf -o "$FILE" -w '   HTTP %{http_code}  %{size_download} bytes  %{content_type}\n' \
+curl -sfL -o "$FILE" \
+  -w '   HTTP %{http_code}  %{size_download} bytes  %{content_type}  redirects=%{num_redirects}\n' \
   "${ROUTER_URL}/api/v1/videos/${ID}/content" -H "$AUTH"
+
 echo "done -> ${FILE}"
