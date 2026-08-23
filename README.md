@@ -50,9 +50,27 @@ curl -X POST localhost:8080/api/v1/videos \
 # poll (use the id from above)
 curl localhost:8080/api/v1/videos/<id> -H "Authorization: Bearer test-key-123"
 
-# or run the whole flow
-ROUTER_KEY=test-key-123 MODEL=bytedance/seedance-2.5 ./smoke_test.sh
+# or run the whole flow: submit -> poll -> download
+ROUTER_KEY=test-key-123 ./smoke_test.sh
 ```
+
+Defaults to the flagship, Seedance 2.5 at 720p/5s. `DURATION` is pinned on
+purpose — 2.5 defaults to `-1`, which lets the model pick any length up to 30s,
+making an unpinned run slow and unpredictably priced.
+
+Longer showcase clip (~8 minutes):
+
+```bash
+ROUTER_KEY=test-key-123 DURATION=25 ./smoke_test.sh
+```
+
+Cheap, fast variant for CI or a post-deploy check (~2 minutes, cents):
+
+```bash
+ROUTER_KEY=test-key-123 MODEL=bytedance/seedance-2.0-mini ./smoke_test.sh
+```
+
+The video lands in `./smoke-output/<timestamp>.mp4`.
 
 ## Deploy to any cloud
 
