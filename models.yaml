@@ -9,11 +9,15 @@
 #
 # A request naming a slug that isn't listed here returns 404 (like OpenRouter's
 # "no endpoints found"), so this file also acts as the allowlist.
+#
+# Each entry may carry an optional `provider:` field naming its backend; it
+# defaults to `byteplus`. The provider-side model id is read from the key named
+# after that provider, so a second backend can be added without touching these.
 
 # ---------------------------------------------------------------------------
 # Video generation  ->  POST /api/v1/videos
 # API: ModelArk "Video generation API" (docs 1520757)
-# Loaded by app.py into MODEL_MAP. This list is the video allowlist.
+# Loaded by providers/__init__.py into MODEL_MAP. This list is the allowlist.
 # ---------------------------------------------------------------------------
 models:
   # Dreamina Seedance 2.5 — mainline. 4–30s, 480p/720p/1080p, .mp4/.mov.
