@@ -14,8 +14,10 @@ used and the reason is reported back on the submit response. A prompt enhancer t
 can take down generation is worse than no enhancer.
 """
 
+import json
 import os
 import pathlib
+import re
 
 import httpx
 
@@ -34,6 +36,25 @@ OPTIMIZER_PATH = os.environ.get("OPTIMIZER_PATH", "/chat/completions")
 OPTIMIZER_MODEL = os.environ.get("OPTIMIZER_MODEL", "seed-2-0-pro-260328")
 OPTIMIZER_TIMEOUT = float(os.environ.get("OPTIMIZER_TIMEOUT", "120"))
 OPTIMIZER_MAX_TOKENS = int(os.environ.get("OPTIMIZER_MAX_TOKENS", "2048"))
+#: Ask the API to enforce the schema. Verified working on seed-2-0-pro even
+#: though ModelArk's structured-output table does not list it. Turn off for a
+#: backend that rejects response_format; the text contract still applies.
+OPTIMIZER_JSON = os.environ.get("OPTIMIZER_JSON", "on").strip().lower() in (
+    "1", "on", "true", "yes"
+)
+
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "optimized_prompt",
+        "schema": {
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}},
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+    },
+}
 #: Per-request `optimize_prompt` always wins; this is only the fallback.
 OPTIMIZER_DEFAULT = os.environ.get("OPTIMIZER_DEFAULT", "off").strip().lower() in (
     "1", "on", "true", "yes"
@@ -52,6 +73,33 @@ SLUG_TOKENS = {
     "bytedance/seedream-5.0": "seedream",
     "bytedance/seedream-5.0-lite": "seedream",
 }
+
+# Appended to every skill as the last thing the model reads. The skills are written
+# for a chat agent that may narrate, use headings or fence its answer; here the reply
+# is fed straight into a generation request, so it must be the prompt and nothing
+# else. Stated last and marked as overriding, because later instructions win.
+OUTPUT_CONTRACT = """
+
+---
+
+# OUTPUT CONTRACT — overrides any formatting instruction above
+
+Your reply is parsed by a program and inserted directly into a generation request.
+It is never read by a human first.
+
+Reply with a single JSON object and nothing else:
+
+{"prompt": "<the finished prompt as one string>"}
+
+Rules:
+
+- Output raw JSON. No code fence, no backticks, no commentary before or after.
+- Exactly one key, "prompt". No notes, no explanation of what you changed.
+- The value is the finished prompt as plain text. Inside it use no markdown, no
+  headings, no bullets and no numbering; write plain sentences. Line breaks inside
+  the string must be escaped as \n.
+- If you have nothing to add to the input, return the input unchanged as the value.
+"""
 
 # sd25-skill.md carries no `models:`/`tasks:` frontmatter, so it is bound by name.
 SKILL_BY_NAME = {"seedance25": "sd25-pe"}
@@ -78,6 +126,47 @@ def _frontmatter(text: str) -> dict:
         elif not line.startswith((" ", "\t")):
             key = None
     return meta
+
+
+def _unfence(text: str) -> str:
+    """Safety net behind OUTPUT_CONTRACT: strip a fence if one appears anyway.
+
+    The instruction is the fix; this is the belt to its braces. Without both, the
+    backticks and language marker travel into the generation prompt verbatim.
+    """
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    lines = t.splitlines()[1:]                      # drop the opening fence
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]                          # drop the closing fence
+    return chr(10).join(lines).strip()
+
+
+def _extract_prompt(text: str):
+    """Pull the prompt out of a JSON reply. Returns (prompt, warning).
+
+    Tries the raw body, then the body with a code fence stripped, then the
+    outermost {...} in case the model wrapped the object in prose.
+    """
+    stripped = _unfence(text)
+    candidates = [text.strip(), stripped]
+    m = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if m:
+        candidates.append(m.group(0))
+
+    for c in candidates:
+        if not c:
+            continue
+        try:
+            obj = json.loads(c)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            p = obj.get("prompt")
+            if isinstance(p, str) and p.strip():
+                return p.strip(), None
+    return None, "reply was not JSON with a string `prompt`"
 
 
 def _load() -> list[dict]:
@@ -137,13 +226,51 @@ def wanted(body: dict) -> bool:
     return OPTIMIZER_DEFAULT if flag is None else bool(flag)
 
 
+async def _chat(client: httpx.AsyncClient, messages: list, max_tokens: int) -> tuple:
+    """POST to the chat endpoint. Returns (text, usage) or raises."""
+    payload = {"model": OPTIMIZER_MODEL, "messages": messages, "max_tokens": max_tokens}
+    if OPTIMIZER_JSON:
+        payload["response_format"] = RESPONSE_FORMAT
+    r = await client.post(
+        f"{OPTIMIZER_BASE_URL}{OPTIMIZER_PATH}",
+        headers={"Authorization": f"Bearer {OPTIMIZER_API_KEY}",
+                 "Content-Type": "application/json"},
+        json=payload,
+        timeout=OPTIMIZER_TIMEOUT,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"optimizer HTTP {r.status_code}")
+    data = r.json()
+    return data["choices"][0]["message"]["content"] or "", data.get("usage")
+
+
+REPAIR_SYSTEM = (
+    "You convert a malformed reply into JSON. Output exactly one JSON object of the "
+    'form {"prompt": "<text>"} and nothing else. Put the generation prompt that the '
+    "input contains into the value, verbatim, minus any markdown, headings, labels "
+    "or commentary. Output raw JSON with no code fence."
+)
+
+
+async def _repair(client: httpx.AsyncClient, bad: str) -> tuple:
+    """Second chance at JSON without re-sending the skill.
+
+    Re-running the skill would cost another ~19k prompt tokens on sd25; this costs
+    a few hundred, because the content is already written — only the shape is wrong.
+    """
+    return await _chat(client, [
+        {"role": "system", "content": REPAIR_SYSTEM},
+        {"role": "user", "content": bad[:12000]},
+    ], max_tokens=OPTIMIZER_MAX_TOKENS)
+
+
 async def optimize(client: httpx.AsyncClient, prompt: str, slug: str, body: dict) -> dict:
     """Returns {"prompt": str, "applied": bool, "skill": str|None, "error": str|None}.
 
     The original prompt is returned unchanged on any failure.
     """
     unchanged = {"prompt": prompt, "applied": False, "skill": None,
-                 "error": None, "usage": None}
+                 "error": None, "warning": None, "usage": None, "attempts": 0}
     if not prompt:
         return {**unchanged, "error": "no prompt to optimize"}
     if not OPTIMIZER_API_KEY:
@@ -152,34 +279,45 @@ async def optimize(client: httpx.AsyncClient, prompt: str, slug: str, body: dict
     skill = pick_skill(slug, task_of(body))
     if skill is None:
         return {**unchanged, "error": f"no skill covers model '{slug}'"}
+    unchanged["skill"] = skill["name"]
 
-    payload = {
-        "model": OPTIMIZER_MODEL,
-        "messages": [
-            {"role": "system", "content": skill["text"]},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": OPTIMIZER_MAX_TOKENS,
-    }
+    messages = [
+        {"role": "system", "content": skill["text"] + OUTPUT_CONTRACT},
+        {"role": "user", "content": prompt},
+    ]
     try:
-        r = await client.post(
-            f"{OPTIMIZER_BASE_URL}{OPTIMIZER_PATH}",
-            headers={"Authorization": f"Bearer {OPTIMIZER_API_KEY}",
-                     "Content-Type": "application/json"},
-            json=payload,
-            timeout=OPTIMIZER_TIMEOUT,
-        )
-        if r.status_code >= 400:
-            return {**unchanged, "skill": skill["name"],
-                    "error": f"optimizer HTTP {r.status_code}"}
-        data = r.json()
-        usage = data.get("usage")
-        text = (data["choices"][0]["message"]["content"] or "").strip()
+        text, usage = await _chat(client, messages, OPTIMIZER_MAX_TOKENS)
     except Exception as e:
-        return {**unchanged, "skill": skill["name"],
-                "error": f"{type(e).__name__}: {e}"[:200]}
+        return {**unchanged, "error": f"{type(e).__name__}: {e}"[:200], "attempts": 1}
 
-    if not text:
-        return {**unchanged, "skill": skill["name"], "error": "optimizer returned empty text"}
-    return {"prompt": text, "applied": True, "skill": skill["name"],
-            "error": None, "usage": usage}
+    out, warning = _extract_prompt(text)
+    attempts = 1
+
+    if out is None:
+        # The schema was not honoured. Repair the shape without paying for the
+        # skill a second time.
+        try:
+            fixed, usage2 = await _repair(client, text)
+            attempts = 2
+            out, warning = _extract_prompt(fixed)
+            if usage and usage2:
+                usage = {k: (usage.get(k, 0) + usage2.get(k, 0))
+                         for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+            if out is not None:
+                warning = "model ignored the JSON contract; repaired in a second call"
+        except Exception as e:
+            return {**unchanged, "error": f"repair failed: {type(e).__name__}"[:200],
+                    "usage": usage, "attempts": 2}
+
+    if out is None:
+        # Never throw away usable text: fall back to the raw reply, but say so.
+        salvaged = _unfence(text).strip()
+        if not salvaged:
+            return {**unchanged, "error": "optimizer returned empty text",
+                    "usage": usage, "attempts": attempts}
+        return {"prompt": salvaged, "applied": True, "skill": skill["name"],
+                "error": None, "usage": usage, "attempts": attempts,
+                "warning": "reply was not valid JSON; used the raw text"}
+
+    return {"prompt": out, "applied": True, "skill": skill["name"],
+            "error": None, "usage": usage, "attempts": attempts, "warning": warning}

@@ -138,6 +138,8 @@ async def optimize_prompt(request: Request):
         "applied": result["applied"],
         "skill": result["skill"],
         "usage": result["usage"],
+        "attempts": result.get("attempts"),
+        "warning": result.get("warning"),
         "error": result["error"],
     }
     return JSONResponse(status_code=200 if result["applied"] else 502, content=payload)
@@ -181,6 +183,8 @@ async def create_video(request: Request):
             "applied": opt["applied"],
             "skill": opt["skill"],
             "error": opt["error"],
+            "warning": opt.get("warning"),
+            "attempts": opt.get("attempts"),
             "prompt": opt["prompt"] if opt["applied"] else None,
         }
     return JSONResponse(status_code=202, content=payload)
