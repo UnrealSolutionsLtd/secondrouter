@@ -14,6 +14,7 @@ BytePlus create/retrieve task and returns results in OpenRouter's shape.
 | GET    | `/api/v1/videos/{id}`                 | Poll status → result URLs when done        |
 | GET    | `/api/v1/videos/{id}/content?index=0` | `302` to the presigned video URL           |
 | GET    | `/api/v1/videos/models`               | List mapped models                         |
+| POST   | `/api/v1/prompts/optimize`            | Rewrite a prompt, generate nothing         |
 | GET    | `/healthz`                            | Liveness                                   |
 
 Auth: every call needs `Authorization: Bearer <one of ROUTER_KEYS>`. The BytePlus
@@ -106,6 +107,82 @@ cannot be combined. `callback_url` is accepted and ignored — polling only.
 
 Result URLs are presigned and **expire after 24 hours**. Store the bytes yourself
 if you need them longer.
+
+## Prompt optimization
+
+**Off by default.** Opt in per request:
+
+```json
+{"model": "bytedance/seedance-2.5", "prompt": "cat surfing", "optimize_prompt": true}
+```
+
+The prompt is rewritten by `seed-2-0-pro-260328` before generation, using the
+vendor prompt guide that matches the target model as the system prompt. The guides
+live in `optimizer/skills/` — replacing a file changes the behaviour, no code edit.
+
+| Target model | Skill |
+|---|---|
+| `seedance-2.5` | `sd25-pe` |
+| `seedance-2.0`, `-fast`, `-mini`, `seedance-1.5-pro` | `sd20-pe` |
+| any Seedance with `omni_reference_task_type: "edit"` | `sd-editing` |
+| `seedream-*` | `sd5-pe` |
+
+The 202 response reports what happened:
+
+```json
+{"id": "...", "status": "pending",
+ "prompt_optimization": {"applied": true, "skill": "sd20-pe", "error": null,
+                         "prompt": "A fluffy domestic tabby cat balances..."}}
+```
+
+**Failures are non-fatal.** A timeout, a bad model id or an unreachable endpoint
+leaves the original prompt in place and puts the reason in `error`; the generation
+still runs. The key is absent from the response entirely when optimization was not
+requested.
+
+Operators can flip the default with `OPTIMIZER_DEFAULT=on`; a per-request
+`optimize_prompt` always wins. `GET /healthz` reports the active default, model and
+loaded skills.
+
+### Optimize without generating
+
+Generation costs dollars and minutes; optimization costs cents and seconds. Use the
+standalone endpoint to preview, edit, and reuse a prompt across models before
+spending anything:
+
+```bash
+curl -X POST localhost:8080/api/v1/prompts/optimize   -H "Authorization: Bearer test-key-123" -H "Content-Type: application/json"   -d '{"model":"bytedance/seedance-2.5","prompt":"cat surfing chased by a shark"}'
+```
+
+```json
+{"model": "bytedance/seedance-2.5", "prompt": "A fluffy tabby cat balances...",
+ "applied": true, "skill": "sd25-pe",
+ "usage": {"prompt_tokens": 19279, "completion_tokens": 478, "total_tokens": 19757},
+ "error": null}
+```
+
+Here a failure is a failed request (`502`), because optimization *is* the request —
+but the original prompt still comes back in the body so you can fall back
+deliberately. That is the opposite of the submit path, where a failed optimization
+must never block generation.
+
+**Measured cost per call**, from the `usage` block:
+
+| Skill | Prompt tokens |
+|---|---|
+| `sd25-pe` (Seedance 2.5) | ~19,300 |
+| `sd20-pe` (Seedance 2.0 / 1.5) | ~2,800 |
+| `sd-editing` | ~660 |
+| `sd5-pe` (Seedream) | ~2,100 |
+
+The 2.5 guide is 7× the next largest. If that cost matters at volume, trimming
+`optimizer/skills/sd25-skill.md` is the lever.
+
+### Using a different LLM
+
+`OPTIMIZER_BASE_URL` and `OPTIMIZER_API_KEY` default to the ModelArk values but are
+read separately: the rewriting model and the generation provider are independent
+axes. Point them at any OpenAI-compatible chat endpoint and nothing else changes.
 
 ## Downloading the result
 
